@@ -83,7 +83,7 @@ class ModelBase:
     metadata_override: Path | None
     dir_model_card: Path
     remote_hf_model_id: str | None
-    fused_shared_input_projs: bool = False
+    fuse_shared_input_projs: bool = False
 
     # subclasses should define this!
     model_arch: gguf.MODEL_ARCH
@@ -102,7 +102,7 @@ class ModelBase:
                  metadata_override: Path | None = None, model_name: str | None = None,
                  split_max_tensors: int = 0, split_max_size: int = 0, dry_run: bool = False,
                  small_first_shard: bool = False, hparams: dict[str, Any] | None = None, remote_hf_model_id: str | None = None,
-                 disable_mistral_community_chat_template: bool = False, fused_shared_input_projs: bool = False):
+                 disable_mistral_community_chat_template: bool = False, fuse_shared_input_projs: bool = False):
         if type(self) is ModelBase or \
                 type(self) is TextModel or \
                 type(self) is MmprojModel:
@@ -117,7 +117,7 @@ class ModelBase:
         self.lazy = not eager or (remote_hf_model_id is not None)
         self.dry_run = dry_run
         self.remote_hf_model_id = remote_hf_model_id
-        self.fused_shared_input_projs = fused_shared_input_projs
+        self.fuse_shared_input_projs = fuse_shared_input_projs
         if remote_hf_model_id is not None:
             self.is_safetensors = True
 
@@ -303,10 +303,10 @@ class ModelBase:
                     break
 
             for new_name, data_torch in (self.modify_tensors(data_torch, name, bid)):
-                if self.fused_shared_input_projs:
+                if self.fuse_shared_input_projs:
                     data = None
                     for weight_group, weight_name, key in zip(
-                        ["qkv"] * 3 + ["upgate"] * 2,
+                        ["qkv"] * 3 + ["gate_up"] * 2,
                         ["q", "k", "v", "up", "gate"],
                         [gguf.MODEL_TENSOR.ATTN_Q, gguf.MODEL_TENSOR.ATTN_K, gguf.MODEL_TENSOR.ATTN_V, gguf.MODEL_TENSOR.FFN_UP, gguf.MODEL_TENSOR.FFN_GATE],
                     ):
@@ -319,10 +319,10 @@ class ModelBase:
                                     shared_input_weights[bid][weight_group]["k"].numpy(),
                                     shared_input_weights[bid][weight_group]["v"].numpy(),
                                 ], axis=0)
-                            elif (len(shared_input_weights[bid][weight_group]) == 2 and weight_group == "upgate"):
+                            elif (len(shared_input_weights[bid][weight_group]) == 2 and weight_group == "gate_up"):
                                 data = np.concatenate([
-                                    shared_input_weights[bid][weight_group]["up"].numpy(),
                                     shared_input_weights[bid][weight_group]["gate"].numpy(),
+                                    shared_input_weights[bid][weight_group]["up"].numpy(),
                                 ], axis=0)
                             break
                     else:
@@ -8868,7 +8868,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fuse-shared-input-projs", action="store_true",
         help=(
-            "Fuse query, key, value projections into single qkv projection and up and gate projections into single upgate projection."
+            "Fuse query, key, value projections into single qkv projection and up and gate projections into single gate_up projection."
         )
     )
 
@@ -9005,7 +9005,7 @@ def main() -> None:
                                      split_max_size=split_str_to_n_bytes(args.split_max_size), dry_run=args.dry_run,
                                      small_first_shard=args.no_tensor_first_split,
                                      remote_hf_model_id=hf_repo_id, disable_mistral_community_chat_template=disable_mistral_community_chat_template,
-                                     fused_shared_input_projs=args.fused_shared_input_projs,
+                                     fuse_shared_input_projs=args.fuse_shared_input_projs,
                                      )
 
         if args.vocab_only:
