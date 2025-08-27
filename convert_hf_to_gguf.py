@@ -16,6 +16,7 @@ from pathlib import Path
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Callable, ContextManager, Iterable, Iterator, Literal, Sequence, TypeVar, cast
 from itertools import chain
+from collections import defaultdict
 from transformers import AutoConfig
 
 import math
@@ -82,6 +83,7 @@ class ModelBase:
     metadata_override: Path | None
     dir_model_card: Path
     remote_hf_model_id: str | None
+    fused_shared_input_projs: bool = False
 
     # subclasses should define this!
     model_arch: gguf.MODEL_ARCH
@@ -94,12 +96,13 @@ class ModelBase:
     is_mistral_format: bool = False
     disable_mistral_community_chat_template: bool = False
 
+
     def __init__(self, dir_model: Path, ftype: gguf.LlamaFileType, fname_out: Path, *, is_big_endian: bool = False,
                  use_temp_file: bool = False, eager: bool = False,
                  metadata_override: Path | None = None, model_name: str | None = None,
                  split_max_tensors: int = 0, split_max_size: int = 0, dry_run: bool = False,
                  small_first_shard: bool = False, hparams: dict[str, Any] | None = None, remote_hf_model_id: str | None = None,
-                 disable_mistral_community_chat_template: bool = False):
+                 disable_mistral_community_chat_template: bool = False, fused_shared_input_projs: bool = False):
         if type(self) is ModelBase or \
                 type(self) is TextModel or \
                 type(self) is MmprojModel:
@@ -114,6 +117,7 @@ class ModelBase:
         self.lazy = not eager or (remote_hf_model_id is not None)
         self.dry_run = dry_run
         self.remote_hf_model_id = remote_hf_model_id
+        self.fused_shared_input_projs = fused_shared_input_projs
         if remote_hf_model_id is not None:
             self.is_safetensors = True
 
@@ -278,6 +282,7 @@ class ModelBase:
 
     def prepare_tensors(self):
         max_name_len = max(len(s) for _, s in self.tensor_map.mapping.values()) + len(".weight,")
+        shared_input_weights = defaultdict(lambda: defaultdict(dict))
 
         for name, data_torch in chain(self.generate_extra_tensors(), self.get_tensors()):
             # we don't need these
@@ -298,9 +303,34 @@ class ModelBase:
                     break
 
             for new_name, data_torch in (self.modify_tensors(data_torch, name, bid)):
-                # TODO: why do we squeeze here?
-                # data = data_torch.squeeze().numpy()
-                data = data_torch.numpy()
+                if self.fused_shared_input_projs:
+                    data = None
+                    for weight_group, weight_name, key in zip(
+                        ["qkv"] * 3 + ["upgate"] * 2,
+                        ["q", "k", "v", "up", "gate"],
+                        [gguf.MODEL_TENSOR.ATTN_Q, gguf.MODEL_TENSOR.ATTN_K, gguf.MODEL_TENSOR.ATTN_V, gguf.MODEL_TENSOR.FFN_UP, gguf.MODEL_TENSOR.FFN_GATE],
+                    ):
+                        if self.match_model_tensor_name(new_name, key, bid):
+                            new_name = new_name.replace(weight_name, weight_group)
+                            shared_input_weights[bid][weight_group][weight_name] = data_torch
+                            if (len(shared_input_weights[bid][weight_group]) == 3 and weight_group == "qkv"):
+                                data = np.concatenate([
+                                    shared_input_weights[bid][weight_group]["q"].numpy(),
+                                    shared_input_weights[bid][weight_group]["k"].numpy(),
+                                    shared_input_weights[bid][weight_group]["v"].numpy(),
+                                ], axis=0)
+                            elif (len(shared_input_weights[bid][weight_group]) == 2 and weight_group == "upgate"):
+                                data = np.concatenate([
+                                    shared_input_weights[bid][weight_group]["up"].numpy(),
+                                    shared_input_weights[bid][weight_group]["gate"].numpy(),
+                                ], axis=0)
+                            break
+                    else:
+                        data = data_torch.numpy()
+                    if data is None:
+                        continue
+                else:
+                    data = data_torch.numpy()
 
                 # if data ends up empty, it means data_torch was a scalar tensor -> restore
                 if len(data.shape) == 0:
@@ -8835,6 +8865,12 @@ def parse_args() -> argparse.Namespace:
             "Using `mistral-common` ensure correctness and zero-day support of tokenization for models converted from the Mistral format but requires to manually setup the tokenization server."
         )
     )
+    parser.add_argument(
+        "--fuse-shared-input-projs", action="store_true",
+        help=(
+            "Fuse query, key, value projections into single qkv projection and up and gate projections into single upgate projection."
+        )
+    )
 
     args = parser.parse_args()
     if not args.print_supported_models and args.model is None:
@@ -8968,7 +9004,8 @@ def main() -> None:
                                      split_max_tensors=args.split_max_tensors,
                                      split_max_size=split_str_to_n_bytes(args.split_max_size), dry_run=args.dry_run,
                                      small_first_shard=args.no_tensor_first_split,
-                                     remote_hf_model_id=hf_repo_id, disable_mistral_community_chat_template=disable_mistral_community_chat_template
+                                     remote_hf_model_id=hf_repo_id, disable_mistral_community_chat_template=disable_mistral_community_chat_template,
+                                     fused_shared_input_projs=args.fused_shared_input_projs,
                                      )
 
         if args.vocab_only:
