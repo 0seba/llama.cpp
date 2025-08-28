@@ -1,5 +1,6 @@
 #include "llama-model.h"
 
+#include "ggml.h"
 #include "llama-impl.h"
 #include "llama-mmap.h"
 #include "llama-batch.h"
@@ -8913,17 +8914,28 @@ struct llm_build_qwen3 : public llm_graph_context {
 
             // self-attention
             {
-                ggml_tensor *Qcur, *Kcur, *Vcur;
+                ggml_tensor *Qcur;
+                ggml_tensor *Kcur;
+                ggml_tensor *Vcur;
                 if (model.layers[il].wqkv) {
-                    const int64_t n_embd_gqa = hparams.n_embd_v_gqa();
                     cur = build_lora_mm(model.layers[il].wqkv, cur);
                     cb(cur, "wqkv", il);
 
-                    Qcur = ggml_view_3d(ctx0, cur, n_embd_head, n_head,    n_tokens, n_embd_head*sizeof(float), cur->nb[1], 0*sizeof(float)*(n_embd));
-                    Kcur = ggml_view_3d(ctx0, cur, n_embd_head, n_head_kv, n_tokens, n_embd_head*sizeof(float), cur->nb[1], 1*sizeof(float)*(n_embd));
-                    Vcur = ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd + n_embd_gqa));
+                    // Qcur = ggml_view_3d(ctx0, cur, n_embd_head, n_head,    n_tokens, n_embd_head*sizeof(float), cur->nb[1], 0);
+                    // Kcur = ggml_view_3d(ctx0, cur, n_embd_head, n_head_kv, n_tokens, n_embd_head*sizeof(float), cur->nb[1], 1*sizeof(float)*(n_embd_head*n_head));
+                    // Vcur = ggml_view_2d(ctx0, cur, n_embd_gqa, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd_head*n_head + n_embd_gqa));
 
-                    Vcur = ggml_cont_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
+                    // Vcur = ggml_cont_3d(ctx0, Vcur, n_embd_head, n_head_kv, n_tokens);
+                    Qcur = ggml_view_2d(ctx0, cur, n_embd_head_k*n_head,     n_tokens, cur->nb[1], 0*sizeof(float)*(n_embd_head_k*n_head));
+                    Kcur = ggml_view_2d(ctx0, cur, n_embd_head_k*n_head_kv, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd_head_k*n_head));
+                    Vcur = ggml_view_2d(ctx0, cur, n_embd_head_v*n_head_kv, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd_head_k*(n_head+n_head_kv)));
+
+                    Qcur = ggml_cont_3d(ctx0, Qcur, n_embd_head_k, n_head,    n_tokens);
+                    Kcur = ggml_cont_3d(ctx0, Kcur, n_embd_head_k, n_head_kv, n_tokens);
+                    Vcur = ggml_cont_3d(ctx0, Vcur, n_embd_head_v, n_head_kv, n_tokens);
+                    // Qcur = ggml_reshape_3d(ctx0, Qcur, n_embd_head_k, n_head,    n_tokens);
+                    // Kcur = ggml_reshape_3d(ctx0, Kcur, n_embd_head_k, n_head_kv, n_tokens);
+                    // Vcur = ggml_reshape_3d(ctx0, Vcur, n_embd_head_v, n_head_kv, n_tokens);
                 } else {
                     // compute Q and K and RoPE them
                     Qcur = build_lora_mm(model.layers[il].wq, cur);
@@ -8988,7 +9000,7 @@ struct llm_build_qwen3 : public llm_graph_context {
                 ggml_tensor* ffn_up = ggml_view_2d(ctx0, cur, n_ff, n_tokens, cur->nb[1], n_ff * ggml_element_size(cur));
                 cur = ggml_mul_mat(ctx0,
                     model.layers[il].ffn_down,
-                    ggml_mul(ctx0, ffn_gate, ggml_silu(ctx0, ffn_up))
+                    ggml_mul(ctx0, ffn_up, ggml_silu(ctx0, ffn_gate))
                 );
             } else {
                  cur = build_ffn(cur,

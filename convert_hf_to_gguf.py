@@ -305,10 +305,15 @@ class ModelBase:
             for new_name, data_torch in (self.modify_tensors(data_torch, name, bid)):
                 if self.fuse_shared_input_projs:
                     data = None
+                    # for weight_group, weight_name, key in zip(
+                    #     ["qkv"] * 3 + ["gate_up"] * 2,
+                    #     ["q", "k", "v", "up", "gate"],
+                    #     [gguf.MODEL_TENSOR.ATTN_Q, gguf.MODEL_TENSOR.ATTN_K, gguf.MODEL_TENSOR.ATTN_V, gguf.MODEL_TENSOR.FFN_UP, gguf.MODEL_TENSOR.FFN_GATE],
+                    # ):
                     for weight_group, weight_name, key in zip(
-                        ["qkv"] * 3 + ["gate_up"] * 2,
-                        ["q", "k", "v", "up", "gate"],
-                        [gguf.MODEL_TENSOR.ATTN_Q, gguf.MODEL_TENSOR.ATTN_K, gguf.MODEL_TENSOR.ATTN_V, gguf.MODEL_TENSOR.FFN_UP, gguf.MODEL_TENSOR.FFN_GATE],
+                        ["qkv"] * 3 ,
+                        ["q", "k", "v"],
+                        [gguf.MODEL_TENSOR.ATTN_Q, gguf.MODEL_TENSOR.ATTN_K, gguf.MODEL_TENSOR.ATTN_V],
                     ):
                         if self.match_model_tensor_name(new_name, key, bid):
                             new_name = new_name.replace(weight_name, weight_group)
