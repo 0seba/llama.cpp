@@ -305,30 +305,26 @@ class ModelBase:
             for new_name, data_torch in (self.modify_tensors(data_torch, name, bid)):
                 if self.fuse_shared_input_projs:
                     data = None
-                    # for weight_group, weight_name, key in zip(
-                    #     ["qkv"] * 3 + ["gate_up"] * 2,
-                    #     ["q", "k", "v", "up", "gate"],
-                    #     [gguf.MODEL_TENSOR.ATTN_Q, gguf.MODEL_TENSOR.ATTN_K, gguf.MODEL_TENSOR.ATTN_V, gguf.MODEL_TENSOR.FFN_UP, gguf.MODEL_TENSOR.FFN_GATE],
-                    # ):
-                    for weight_group, weight_name, key in zip(
-                        ["qkv"] * 3 ,
-                        ["q", "k", "v"],
-                        [gguf.MODEL_TENSOR.ATTN_Q, gguf.MODEL_TENSOR.ATTN_K, gguf.MODEL_TENSOR.ATTN_V],
+                    for weight_group, key in zip(
+                        ["attn_qkv"] * 3 + ["ffn_gate_up"] * 2,
+                        [gguf.MODEL_TENSOR.ATTN_Q, gguf.MODEL_TENSOR.ATTN_K, gguf.MODEL_TENSOR.ATTN_V, gguf.MODEL_TENSOR.FFN_UP, gguf.MODEL_TENSOR.FFN_GATE],
                     ):
                         if self.match_model_tensor_name(new_name, key, bid):
-                            new_name = new_name.replace(weight_name, weight_group)
-                            shared_input_weights[bid][weight_group][weight_name] = data_torch
-                            if (len(shared_input_weights[bid][weight_group]) == 3 and weight_group == "qkv"):
-                                data = np.concatenate([
-                                    shared_input_weights[bid][weight_group]["q"].numpy(),
-                                    shared_input_weights[bid][weight_group]["k"].numpy(),
-                                    shared_input_weights[bid][weight_group]["v"].numpy(),
-                                ], axis=0)
-                            elif (len(shared_input_weights[bid][weight_group]) == 2 and weight_group == "gate_up"):
-                                data = np.concatenate([
-                                    shared_input_weights[bid][weight_group]["gate"].numpy(),
-                                    shared_input_weights[bid][weight_group]["up"].numpy(),
-                                ], axis=0)
+                            new_name = new_name.split(".")
+                            new_name[-2] = weight_group
+                            new_name = ".".join(new_name)
+                            shared_input_weights[bid][weight_group][key] = data_torch
+                            if (len(shared_input_weights[bid][weight_group]) == 3 and weight_group == "attn_qkv"):
+                                data = torch.concatenate([
+                                    shared_input_weights[bid][weight_group][gguf.MODEL_TENSOR.ATTN_Q],
+                                    shared_input_weights[bid][weight_group][gguf.MODEL_TENSOR.ATTN_K],
+                                    shared_input_weights[bid][weight_group][gguf.MODEL_TENSOR.ATTN_V],
+                                ], dim=0).numpy()
+                            elif (len(shared_input_weights[bid][weight_group]) == 2 and weight_group == "ffn_gate_up"):
+                                data = torch.concatenate([
+                                    shared_input_weights[bid][weight_group][gguf.MODEL_TENSOR.FFN_GATE],
+                                    shared_input_weights[bid][weight_group][gguf.MODEL_TENSOR.FFN_UP],
+                                ], dim=0).numpy()
                             break
                     else:
                         data = data_torch.numpy()
