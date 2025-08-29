@@ -8923,9 +8923,7 @@ struct llm_build_qwen3 : public llm_graph_context {
 
                     Qcur = ggml_view_3d(ctx0, cur, n_embd_head_k, n_head,     n_tokens, n_embd_head_k*sizeof(float), cur->nb[1], 0*sizeof(float)*(n_embd_head_k*n_head));
                     Kcur = ggml_view_3d(ctx0, cur, n_embd_head_k, n_head_kv,  n_tokens, n_embd_head_k*sizeof(float), cur->nb[1], 1*sizeof(float)*(n_embd_head_k*n_head));
-                    // Vcur = ggml_view_3d(ctx0, cur, n_embd_head_v, n_head_kv,  n_tokens, n_embd_head_v*sizeof(float), cur->nb[1], 1*sizeof(float)*(n_embd_head_k*(n_head+n_head_kv)));
-                    Vcur = ggml_view_2d(ctx0, cur, n_embd_head_v*n_head_kv, n_tokens, cur->nb[1], 1*sizeof(float)*(n_embd_head_k*(n_head+n_head_kv)));
-                    Vcur = ggml_cont_3d(ctx0, Vcur, n_embd_head_v, n_head_kv, n_tokens);
+                    Vcur = ggml_view_3d(ctx0, cur, n_embd_head_v, n_head_kv,  n_tokens, n_embd_head_v*sizeof(float), cur->nb[1], 1*sizeof(float)*(n_embd_head_k*(n_head+n_head_kv)));
                 } else {
                     // compute Q and K and RoPE them
                     Qcur = build_lora_mm(model.layers[il].wq, cur);
